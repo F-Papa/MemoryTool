@@ -1,143 +1,212 @@
-// MemoryTool.cpp : This file contains the 'main' function. Program execution begins and ends there.
-//
-
-#include <iostream>
-#include <Windows.h>
-
-void CambiarBase(HANDLE process, DWORD address, DWORD nuevaBase)
-{
-    //Obtener el address de kernel32.dll
-    HMODULE k32 = GetModuleHandle(L"kernel32.dll");
-
-    //Obtener address de GetModuleHandle()
-    LPVOID funcAdr = GetProcAddress(k32, "GetoduleHandleA");
-    if (!funcAdr)
-        funcAdr = GetProcAddress(k32, "GetModuleHandleW");
-
-    //Creamos el thread    
-    HANDLE thread = CreateRemoteThread(process, NULL, NULL,
-        (LPTHREAD_START_ROUTINE)funcAdr,
-        NULL, NULL, NULL);
-    
-    
-
-    //Dejamos que la thread termine
-    WaitForSingleObject(thread, INFINITE);
-
-    //Obtenemos el exit code
-    GetExitCodeThread(thread, &nuevaBase);
-
-    //Limpiamos
-    CloseHandle(thread);
-
-    /*DWORD delta = address - 0x400000;
-    return delta + nuevaBase;*/
-}
-
-
-
-template <typename T>
-BOOL LeerMemoria(HANDLE process, DWORD address, T& valor)
-{
-    return ReadProcessMemory(process, (LPVOID)address, &valor, sizeof(valor), 0);
-}
-
-template <typename T>
-BOOL EscribirMemoria(HANDLE process, DWORD address, T& valor)
-{
-    return WriteProcessMemory(process, (LPVOID)address, &valor, sizeof(valor), 0);
-}
-
-template <typename T>
-DWORD ProtegerMemoria(HANDLE process, DWORD address, DWORD nuevaProteccion, T tipo)
-{
-    DWORD protOriginal;
-    VirtualProtectEx(process,(LPVOID)address, sizeof(T), nuevaProteccion,  &protOriginal);
-    return protOriginal;
-}
+#include "Scan.h"
 
 int main()
 {
-    HWND myWindow = FindWindow(NULL, L"Rise of Nations: Extended Edition");
-    DWORD address = 0x01A484B0; 
-    DWORD pID;
- 
-    int val = 0;
-    char eleccion = 0;
+    const wchar_t* nombreVentana = L"Rise of Nations: Extended Edition";
 
-    //Obtencion del ID del Proceso
+    HWND myWindow = FindWindow(NULL, nombreVentana);
+    DWORD pID;
 
     GetWindowThreadProcessId(myWindow, &pID);
 
-    HANDLE process = OpenProcess(
-        PROCESS_VM_OPERATION |
-        PROCESS_VM_WRITE |
-        PROCESS_VM_READ,
-        FALSE,
-        pID);
+    HANDLE proceso = MTool::HandleReadWrite(pID);
 
-    if (process == NULL || process == INVALID_HANDLE_VALUE)
-    {
-        std::cout << "Error (" << GetLastError() << ") obteniendo el Handle del Processo con ID: " << pID << std::endl;
-    }
-    else
-    {
-        std::cout << "Handle obtenido con exito!" << std::endl;
-    }
+    BYTE* baseAddress = MTool::GetBaseAdr(pID);
+    DWORD mainOffset = 0x9C9258;
+    DWORD instructionOffset = 0x205783;
 
-    //Cambiamos la Proteccion de la memoria
-    DWORD protOrig = ProtegerMemoria(process, address, PAGE_READWRITE, val);
+    int offsetJugadores = 0x6EEC;
+    int claveEncripcion = 0x8221;
 
-    //Elegir si Escribir o Leer la memoria del Address indicado.
+    wprintf(TEXT("El Base Address de %s es [%p]\n"), nombreVentana, baseAddress);
+    MTool::PrintSeparador();
+    
+    DWORD* pointer1 = (DWORD*)baseAddress + mainOffset / 4;
+    DWORD* deRef;
+    UINT i;
+    int eleccion;
 
-    while (toupper(eleccion) != 'E' && toupper(eleccion) != 'L')
+    int numJugadores;
+
+    printf("Ingrese el numero de jugadores: ");
+    std::cin >> numJugadores;
+
+    while (true)
     {
         system("CLS");
-        std::cout << "Leer [L] o Escribir [E] Memoria?" << std::endl;
+
+        //Menu
+        {
+            printf("[1] Para mostrar los recursos de todos los jugadores\n");
+            printf("[2] Para cambiar los recursos de un jugador\n");
+            printf("[3] Para agregarte 100 de comida (Thread Injection)\n");
+            printf("[4] Para agregarte 100 de comida (Main Thread Manipulation)\n");
+            printf("[5] Function Caller\n");
+        }
         std::cin >> eleccion;
-    } 
-    
-    //Ejecuta la accion seleccionada
-    
-    switch (toupper(eleccion))
-    {
-    case 'E':
-    {
-        std::cout << "Valor Deseado: " << std::endl;
-        std::cin >> val;
 
-        if (EscribirMemoria(process, address, val))
+        switch (eleccion)
         {
-            std::cout << "Valor ubicado en [" << address << "] fue cambiado a:" << val << std::endl;
-        }
-        else
-        {
-            std::cout << "No se pudo sobreescribir la memoria pedida." << std::endl;
-        }
-
-        break;
-    }
         
-
-    case 'L':
-    {
-        if (LeerMemoria(process, address, val))
+        case 1:
         {
-            std::cout << "Valor ubicado en [" << address << "]: " << val << std::endl;
+            for (i = 0; i < numJugadores; i++)
+            {
+                pointer1 = (DWORD*)baseAddress + mainOffset / 4 + i * (offsetJugadores / 4);
+                MTool::LeerMemoria(proceso, pointer1, deRef);
+                MTool::PrintRecursos(proceso, deRef, i + 1);
+
+            }
+            printf("Enter para volver al menu.\n");
+
+            std::cin.get();
+            std::cin.get();
+
+            break;
         }
-        else
+
+        case 2:
         {
-            std::cout << "No se pudo leer memoria pedida. " << std::endl;
+            printf("Ingrese el numero de jugador:\n");
+            std::cin >> eleccion;
+
+            pointer1 = (DWORD*)baseAddress + mainOffset / 4 + (eleccion - 1) * (offsetJugadores / 4);
+
+            MTool::LeerMemoria(proceso, pointer1, deRef);
+
+            printf("[1] Comida\n");
+            printf("[2] Madera\n");
+            printf("[3] Oro\n");
+            printf("[4] Conocimiento\n");
+            printf("[5] Metal\n");
+            printf("[6] Petroleo\n");
+            printf("[7] Todos\n");
+
+
+            std::cin >> eleccion;
+
+            if (eleccion = 7)
+            {
+                printf("Ingrese un nuevo valor: ");
+                MTool::EncriptarNuevoValor(eleccion, claveEncripcion);
+
+                for (i = 0; i < 6; i++)
+                {
+                    MTool::EscribirMemoria(proceso, deRef + i, eleccion);
+                }
+            }
+
+            else
+            {
+
+                deRef += (eleccion - 1);
+
+                printf("Ingrese un nuevo valor: ");
+                MTool::EncriptarNuevoValor(eleccion, claveEncripcion);
+
+                MTool::EscribirMemoria(proceso, deRef, eleccion);
+
+            }
+
+            break;
         }
+            
+        case 3:
+        {
+            DWORD address;
+            MTool::LeerMemoria(proceso, pointer1, address);
+            printf("%x\n", address);
 
-        break;
+            BYTE shellcode[8] = {
+                0x83, 0x05, 0x00, 0x00, 0x00, 0x00, 0x64,    //mov address,64              
+                0xC3
+            };
+
+            memcpy(&shellcode[2], &address, 4);
+
+            int caveLen = sizeof(shellcode);
+
+            auto remoteCave = VirtualAllocEx(proceso, 0, caveLen, MEM_COMMIT, PAGE_EXECUTE);
+            WriteProcessMemory(proceso, remoteCave, shellcode, caveLen, NULL);
+
+            HANDLE thread = CreateRemoteThread(proceso, NULL, NULL, (LPTHREAD_START_ROUTINE)remoteCave, NULL, NULL, NULL);
+            WaitForSingleObject(thread, INFINITE);
+            CloseHandle(thread);
+            VirtualFreeEx(proceso, remoteCave, caveLen, MEM_RELEASE);
+
+            break;
+        }
+        
+        case 4:
+        {
+           BYTE shellcode2[17] = {
+                0x60,                                       //PUSHFD
+                0x9C,                                       //PUSHAD
+                0x83, 0x05, 0x00, 0x00, 0x00, 0x00, 0x64,   //MOVE ADD [ADDRESS2], ...
+                0x9D,                                       //POPAD
+                0x61,                                       //POPFD
+                0x68, 0x00, 0x00, 0x00, 0x00,               //PUSH...
+                0xC3 };                                     //RETURN
+            
+            DWORD address2;
+            ReadProcessMemory(proceso, pointer1, &address2, 4, NULL);
+            memcpy(&shellcode2[4], &address2, 4);
+            
+            HANDLE thread;
+            CONTEXT threadContext;
+            MTool::GetThreadContext(proceso, thread, threadContext);      
+            memcpy(&shellcode2[12], &threadContext.Eip, 4);
+
+            //Shellcode listo
+
+            //MTool::MainThreadDetour(proceso, shellcode2, thread, threadContext);  CRASHEA NO SE PORQUE
+            auto remoteCave = VirtualAllocEx(proceso, 0, sizeof(shellcode2), MEM_COMMIT, PAGE_EXECUTE);
+
+            WriteProcessMemory(proceso, remoteCave, shellcode2, sizeof(shellcode2), NULL);
+
+            threadContext.Eip = (DWORD)remoteCave;
+            threadContext.ContextFlags = CONTEXT_CONTROL;
+            SetThreadContext(thread, &threadContext);
+            ResumeThread(thread);
+            break;
+        };
+
+        case 5:
+            BYTE shellcode3[] =
+            {   0x60,                                       //PUSHFD
+                0x9C,                                       //PUSHAD
+
+                0xB8, 0x00, 0x00, 0x00, 0x00,               // MOV EAX, 0x0
+                0xFF, 0xD0,                                 //CALL EAX
+
+                0x9D,                                       //POPAD
+                0x61,                                       //POPFD
+                0x68, 0x00, 0x00, 0x00, 0x00,               //PUSH 0x0
+                0xC3 };                                     //return
+
+            HANDLE thread;
+            CONTEXT threadContext;
+            MTool::GetThreadContext(proceso, thread, threadContext);
+            memcpy(&shellcode3[12], &threadContext.Eip, 4);
+
+            DWORD functionAddress = 0x00795952;
+            memcpy(&shellcode3[3], &functionAddress, 4);
+
+            //Shellcode listo
+
+            auto remoteCave = VirtualAllocEx(proceso, 0, sizeof(shellcode3), MEM_COMMIT, PAGE_EXECUTE);
+
+            WriteProcessMemory(proceso, remoteCave, shellcode3, sizeof(shellcode3), NULL);
+
+            threadContext.Eip = (DWORD)remoteCave;
+            threadContext.ContextFlags = CONTEXT_CONTROL;
+            SetThreadContext(thread, &threadContext);
+            ResumeThread(thread);
+
+            break;
+        }
     }
-
-    }
-
-    Sleep(2000);
-    system("CLS");
-
+   
     std::cout << "Cerrando Handle..." << std::endl;
-    CloseHandle(process);
+    CloseHandle(proceso);
 }
